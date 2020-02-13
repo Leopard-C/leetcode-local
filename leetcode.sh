@@ -1,8 +1,64 @@
 #!/bin/bash
 
 DEV_DIR=/home/icrystal/dev
-LEETCODE_DIR="$DEV_DIR/cpp/leetcode"
+LEETCODE_DIR=$DEV_DIR/cpp/leetcode
+CONFIG_DIR=$LEETCODE_DIR/.config
+CONFIG_FILE=$CONFIG_DIR/data
 THIS_FILE=$DEV_DIR/shell/leetcode/leetcode.sh
+
+
+## judge the special type of current directory
+#
+DIR_TYPE_UNKNOWN=0
+DIR_TYPE_LEETCODE_DIR=1
+DIR_TYPE_PROBLEM_DIR=2
+DIR_TYPE_SOLUTION_DIR=3
+function getCurrDirType()
+{
+    currDir=$(pwd)
+    if [ ${#currDir} -lt ${#LEETCODE_DIR} ]; then
+        return $DIR_TYPE_UNKNOWN
+    fi
+
+    if [ ! ${currDir:0:${#LEETCODE_DIR}} = $LEETCODE_DIR ]; then
+        return $DIR_TYPE_UNKNOWN
+    fi
+
+    if [ ${#currDir} -eq ${#LEETCODE_DIR} ]; then
+        return $DIR_TYPE_LEETCODE_DIR
+    fi
+
+    slash_count=0
+    for i in $(seq $((${#LEETCODE_DIR}+1)) $((${#currDir}-1)))
+    do
+        char=${currDir:$i:1}
+        if [ $char = '/' ]; then
+            let slash_count=slash_count+1
+        fi
+    done
+
+    if [ $slash_count -eq 0 ]; then
+        return $DIR_TYPE_PROBLEM_DIR
+    elif [ $slash_count -eq 1 ]; then
+        return $DIR_TYPE_SOLUTION_DIR
+    else
+        return $DIR_TYPE_UNKNOWN
+    fi
+}
+
+
+
+## Write config
+#  $1: key
+#  $2: oldValue
+#  $3: newValue
+#  $4: configFile
+#
+function writeConfig()
+{
+    if [ $# -ne 4 ]; then return 1; fi
+    sed -i "s/$1=$2/$1=$3/g" $4
+}
 
 
 ## 添加新的题目
@@ -10,10 +66,16 @@ THIS_FILE=$DEV_DIR/shell/leetcode/leetcode.sh
 function process_new()
 {
     clipboard_content=`xsel -o -b`
+    echo $clipboard_content |grep --quiet -e "^[0-9]*\."
+    if [ $? -ne 0 ]; then
+        echo "Error, the content in the clipboard is invalid"
+        return 1
+    fi
     line_num=`echo $clipboard_content | wc -l`
     let line_num=line_num-1
     dir_name=`echo $clipboard_content | head -1`
     class_def=`echo $clipboard_content | tail -$line_num`
+    writeConfig lc_latest $lc_latest $dir_name $CONFIG_FILE
 
     dir="$LEETCODE_DIR/$dir_name"
     if [ ! -d $dir ]; then
@@ -25,19 +87,31 @@ function process_new()
     fi
 
     # 生成代码模板
-    include_header='#include <algorithm>\n#include <iostream>\n'
-    namespace='using namespace std;\n\n'
-    #class_def=`echo $clipboard_content | tail -$line_num`
-    main_func='int main() {\n\tSolution s;\n\n\tstd::cout << "OK!" << std::endl;\n}\n'
+    namespace='using namespace std;\n'
+    define='#define Log(x) cout << (x) << endl\n'
+    header='#include <algorithm>\n#include <iostream>\n'
+    STLs=(vector list queue map string)
+    for stl in ${STLs[@]}
+    do
+        echo $class_def |grep -q ${stl}
+        if [ $? -eq 0 ]; then
+            header="$header""#include <""${stl}"">\n"
+        fi
+    done
+    main_func='int main() {\n\tSolution s;\n\n\tLog("OK!");\n}\n'
+    content="$header$namespace\n$define\n$class_def\n\n$main_func"
+    echo $content > $dir/.template.cpp
 
-    echo "$include_header$namespace$class_def\n\n$main_func" > $dir/.template.cpp
+    if [ $# -eq 1 ] &&  [ $1 = "-t" ]; then
+        vim $dir/.template.cpp 
+    fi
 
     # 不同解题方案放在不同文件夹
     # 初始文件夹为solution1
     mkdir $dir/solution1
     cd $dir/solution1
     cp ../.template.cpp main.cpp
-    vim main.cpp
+    editMainCpp
 }
 
 
@@ -45,8 +119,14 @@ function process_new()
 #
 function process_init()
 {
-    if [ -e "../.template.cpp" ]; then
+    getCurrDirType
+    dirType=$?
+    if [ $dirType -eq $DIR_TYPE_SOLUTION_DIR ]; then
+        echo "helo"
         cd ..
+    elif [ $dirType -lt $DIR_TYPE_PROBLEM_DIR ]; then
+        echo "ERROR: You are not in a problem directory"
+        return 1 
     fi
 
     if [ -e ".template.cpp" ]; then
@@ -55,7 +135,7 @@ function process_init()
         mkdir "solution$newSolutionId"
         cd "solution$newSolutionId"
         cp ../.template.cpp main.cpp
-        vim main.cpp
+        editMainCpp
     fi
 }
 
@@ -64,12 +144,15 @@ function process_init()
 #
 function process_submit()
 {
-    if [ ! -f main.cpp ]; then return 1; fi
+    if [ ! -f main.cpp ]; then
+        echo "ERROR: You are not int a solution directory"
+        return 1;
+    fi
 
     start_line=`cat main.cpp| grep 'Solution' -n|head -1|awk -F ':' '{print $1}'`
     if [ $? -ne 0 ]; then return 2; fi
     array=(`cat main.cpp| grep '^};$' -n|awk -F ':' '{print $1}'`)
-    if [ $? -ne 0 ]; then  return 2;  fi
+    if [ $? -ne 0 ]; then return 2; fi
     for var in $array;
     do
         if [ $var -ge $start_line ]; then
@@ -95,6 +178,7 @@ function process_cd
                 cd $dir
             else
                 echo $dir
+                return 1
             fi
         else
             echo "ERROR: not found!"
@@ -123,6 +207,13 @@ function process_cd
 #
 function process_cds()
 {
+    getCurrDirType
+    dirType=$?
+    if [ $dirType -lt $DIR_TYPE_PROBLEM_DIR ]; then
+        echo "ERROR: You are not in a problem directory"
+        return 1
+    fi
+
     if [ $# -eq 0 ]; then
         latestSolutionId=`ls -l |grep "^d" |wc -l`
         solutionDir="solution$latestSolutionId"
@@ -140,35 +231,61 @@ function process_cds()
     fi
 }
 
+
+## edit main.cpp
+#
+function editMainCpp()
+{
+    if [ -e main.cpp ]; then
+        line=`cat main.cpp |grep "class Solution" -n |head -1 |awk -F ':' '{print $1}'`
+        let line=line+3
+        vim main.cpp +$line
+    fi
+}
+
 ## main function
 #
 function main_func() 
 {
+    if [ -d $CONFIG_DIR ]; then mkdir -p $CONFIG_DIR; fi
+    if [ -e $CONFIG_FILE ]; then touch $CONFIG_FILE; fi        
+
+    # read config file
+    source $CONFIG_FILE
+
     if [ $# -eq 0 ]; then
-        if [ -f main.cpp ]; then
-            vim main.cpp
-        fi
+        editMainCpp
         return 0
     fi
 
     case $1 in
-    edit)
-        line=`cat $THIS_FILE |grep "main_func()" -n |head -1 |awk -F ':' '{print $1}'`
-        if [ $? -eq 0 ]; then
+    edit | e)
+        if [ $# -eq 1 ]; then
+            line=`cat $THIS_FILE |grep "main_func()" -n |head -1 |awk -F ':' '{print $1}'`
             vim $THIS_FILE +$line
-        else
-            vim $THIS_FILE
+        elif [ $# -eq 2 ]; then
+            line=`cat $THIS_FILE |grep "$2" -n |head -1 |awk -F ':' '{print $1}'`
+            vim $THIS_FILE +$line
         fi
         ;;
     open | url)
         google-chrome https://leetcode-cn.com/problemset/all/\?difficulty\=%E7%AE%80%E5%8D%95
-        ;;    
-    home)
+        ;;
+    config | cfg)
+        if [ $# -eq 1 ]; then
+            vim $CONFIG_FILE
+        else
+            writeConfig $2 `eval echo '$'"$2"` $3 $CONFIG_FILE
+        fi
+        ;;
+    home | h)
         cd $LEETCODE_DIR
+        echo "You are now in the HOME directory of LEETCODE."
+        echo `pwd`
         ;;
     cd)
         if [ $# -eq 1 ]; then
-            cd $LEETCODE_DIR
+            process_cd $lc_latest
         elif [ $# -eq 2 ]; then
             process_cd $2
         elif [ $# -eq 3 ]; then
@@ -200,8 +317,11 @@ function main_func()
     new)
         if [ $# -eq 1 ]; then
             process_new
+        elif [ $# -eq 2 ]; then
+            process_new $2
         else
-            echo "ERROR: command 'init' doesn't accept any parameter"
+            echo "ERROR: command 'new' accept once parameter at most."
+            return 1
         fi
         ;;
     init)
@@ -209,14 +329,76 @@ function main_func()
             process_init
         else
             echo "ERROR: command 'init' doesn't accept any parameter"
+            return 1
         fi
         ;;
     submit | commit | c)
         process_submit
         ;;
-    esac
+    template | t)
+        getCurrDirType
+        dirType=$?
+        if [ $dirType -eq $DIR_TYPE_SOLUTION_DIR ]; then
+            cd ..
+        elif [ $dirType -lt $DIR_TYPE_PROBLEM_DIR ]; then
+            echo "ERROR: You are not in a problem directory"
+            return 1 
+        fi
+
+        if [ -e .template.cpp ]; then
+            vim .template.cpp
+        else
+            echo "ERROR: Not found file .template.cpp"
+            return 1
+        fi
+        ;;
+    compile | build | b)
+        getCurrDirType
+        if [ $? -ne $DIR_TYPE_SOLUTION_DIR ]; then
+            echo "ERROR: You are not in a solution directory"
+            return 1 
+        fi
+
+        if [ -e main.cpp ]; then
+            g++ -o out main.cpp
+            if [ $? -eq 0 ]; then
+                echo "Compiled successfully!"
+                echo "Run the program now? (Yes/No): \c"
+                read
+                case $REPLY in
+                    [nN][oN]|[nN])
+                        return 0
+                        ;;
+                    *)
+                        echo "\n*********** Running ************"
+                        ./out
+                        echo "********************************"
+                        ;;
+                esac
+            fi
+        else
+            echo "ERROR: There is no main.cpp in the directory"
+            return 1
+        fi
+        ;;
+    run | r)
+        if [ -e out ] && [ -x out ]; then
+            echo "\n*********** Running ************"
+            ./out
+            echo "********************************"
+        else
+            echo "ERROR: No executable file named out"
+            return 1
+        fi
+        ;;
+    *)
+        echo "Unknown command: ""$1"
+        return 1
+        ;;
+esac
 }
 
 
 main_func $@
+return $?
 
