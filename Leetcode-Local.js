@@ -1,13 +1,12 @@
 // ==UserScript==
 // @name         Leetcode-Local
 // @namespace    http://tampermonkey.net/
-// @version      0.1
-// @description  Copy question's id, English name and default code template to system clipboard
+// @version      0.2
+// @description  Copy question's id, English name, description and code template to system clipboard
 // @author       iCrystal
 // @match        https://leetcode-cn.com/problems/*
 // @grant        none
 // ==/UserScript==
-
 
 
 (function() {
@@ -47,8 +46,10 @@
             if (titleEn[len-1] == '/') {
                 titleEn = titleEn.substr(0, len-1);
             }
-
             var title = id + '.' + titleEn;
+
+            // Description
+            var description = document.getElementsByClassName('notranslate')[1].innerText;
 
             // 默认模板代码
             var inputTags = document.getElementsByTagName('input');
@@ -56,13 +57,14 @@
 
             // 复制到系统剪贴板
             var textarea = document.createElement('textarea');
-            textarea.value = title + "\n" + codeTemplate;
+            textarea.value = title + "\n" + description + "\n" + codeTemplate;
             document.body.appendChild(textarea);
             textarea.select();
             document.execCommand("Copy");
             textarea.className = "textarea";
             textarea.style.display = "none";
-            alert("OK!");
+            button.setAttribute('value', 'OK');
+            setTimeout(function(){ button.setAttribute('value', 'Copy'); }, 3000);
         } // end function: button.onclick
 
     } // end function: addCopyButton
