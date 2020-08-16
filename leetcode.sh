@@ -291,6 +291,38 @@ function editMainCpp()
     fi
 }
 
+## Compile
+#
+function compile() {
+    getCurrDirType
+    if [ $? -ne $DIR_TYPE_SOLUTION_DIR ]; then
+        echo "ERROR: You are not in a solution directory"
+        return 1 
+    fi
+
+    if [ -e main.cpp ]; then
+        g++ -o out main.cpp $@ -Wreturn-type
+        return $?
+    else
+        echo "ERROR: There is no main.cpp in the directory"
+        return 1
+    fi
+}
+
+## Run
+#
+function run_exe() {
+    if [ -e out ] && [ -x out ]; then
+        echo "\n*********** Running ************"
+        ./out
+        echo "********************************"
+        return 0
+    else
+        echo "ERROR: No executable file named out"
+        return 1
+    fi
+}
+
 ## main function
 #
 function main_func() 
@@ -380,8 +412,11 @@ function main_func()
                 return 1
             fi
             ;;
-        submit | commit | c)
-            process_submit
+        copy | submit | commit | c)
+            compile
+            if [ $? -eq 0 ]; then
+                process_submit
+            fi
             ;;
         template | t)
             getCurrDirType
@@ -401,46 +436,62 @@ function main_func()
             fi
             ;;
         compile | build | b)
-            getCurrDirType
-            if [ $? -ne $DIR_TYPE_SOLUTION_DIR ]; then
-                echo "ERROR: You are not in a solution directory"
-                return 1 
+            compile
+            if [ $? -eq 0 ]; then
+                echo "Compiled successfully!"
+                echo "Run the program now? (Yes/No): \c"
+                read
+                case $REPLY in
+                    [nN][oN]|[nN])
+                        return 0
+                        ;;
+                    *)
+                        echo "\n*********** Running ************"
+                        ./out
+                        echo "********************************"
+                        ;;
+                esac
             fi
-
-            if [ -e main.cpp ]; then
-                g++ -o out main.cpp
-                if [ $? -eq 0 ]; then
-                    echo "Compiled successfully!"
-                    echo "Run the program now? (Yes/No): \c"
-                    read
-                    case $REPLY in
-                        [nN][oN]|[nN])
-                            return 0
-                            ;;
-                        *)
-                            echo "\n*********** Running ************"
-                            ./out
-                            echo "********************************"
-                            ;;
-                    esac
-                fi
+            return $?
+            ;;
+        run | r)
+            run_exe
+            ;;
+        rc)
+            compile
+            echo "Compiled successfully!"
+            if [ $? -eq 0 ]; then
+                run_exe
             else
-                echo "ERROR: There is no main.cpp in the directory"
                 return 1
             fi
             ;;
-        run | r)
-            if [ -e out ] && [ -x out ]; then
-                echo "\n*********** Running ************"
-                ./out
-                echo "********************************"
+        rcg)
+            compile -g
+            echo "Compiled successfully!"
+            if [ $? -eq 0 ]; then
+                run_exe
             else
-                echo "ERROR: No executable file named out"
+                return 1
+            fi
+            ;;
+        gdb | g)
+            compile -g
+            echo "Compiled successfully!"
+            if [ $? -eq 0 ]; then
+                gdb out
+            else
                 return 1
             fi
             ;;
         help | -h)
             printUsage
+            ;;
+        git | push)
+            cd $LEETCODE_DIR
+            git add . || return 1
+            git commit -m "update" || return 1
+            git push -u origin master || return 1
             ;;
         *)
             echo "Unknown command: ""$1"
